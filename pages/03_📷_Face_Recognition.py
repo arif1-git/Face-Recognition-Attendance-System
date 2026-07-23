@@ -51,7 +51,7 @@ def send_student_email(student_email, student_name, date, time_str):
         server.send_message(msg)
         server.quit()
     except Exception as e:
-        print(f"Email Error: {e}")
+        pass
 
 def mark_attendance(roll, name, dep):
     file_name = "app.csv"
@@ -86,17 +86,6 @@ st.write("---")
 
 col1, col2, col3 = st.columns([1, 2, 1])
 
-# --- Haar Cascade ---
-cascade_path = 'haarcascade_frontalface_default.xml'
-if not os.path.exists(cascade_path):
-    cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-
-try:
-    face_cascade = cv2.CascadeClassifier(cascade_path)
-except Exception as e:
-    st.error("Error loading cascade.")
-    st.stop()
-
 # --- WebRTC Config ---
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
@@ -113,11 +102,21 @@ else:
         frame = frame_obj.to_ndarray(format="bgr24")
         
         try:
+            # 🛠️ TESTING TEXT: Yeh directly aapke video par dikhega
+            cv2.putText(frame, "System Active...", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+            
+            # Safe Cascade Loading
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            
+            if face_cascade.empty():
+                cv2.putText(frame, "HaarCascade Error!", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                return av.VideoFrame.from_ndarray(frame, format="bgr24")
+
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
 
             for (x, y, w, h) in faces:
-                # ✨ NAYA: Sabse pehle ek blue box banayega detection confirm karne ke liye
                 cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
 
                 try:
@@ -138,29 +137,25 @@ else:
                                 email_thread = threading.Thread(target=send_student_email, args=(e, n, curr_date, curr_time))
                                 email_thread.start()
                             
-                            # ✨ SUCCESS: Face recognized & found in DB (Green)
                             cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 3)
                             cv2.rectangle(frame, (x, y-75), (x+w, y), (0, 255, 0), cv2.FILLED) 
                             cv2.putText(frame, f"{n}", (x+5, y-50), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 1)
                             cv2.putText(frame, "Present", (x+5, y-5), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
                         else:
-                            # ✨ ERROR: Face recognized but not in DB (Orange)
                             cv2.putText(frame, "Not in DB", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 165, 255), 2)
                         
                         cv2.putText(frame, f"Raw Score: {int(predict)}", (x, y+h+25), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 0), 2)
                             
                     else:
-                        # ✨ ERROR: Unknown Face (Red)
                         cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 3)
                         cv2.putText(frame, "Unknown Face", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
                         cv2.putText(frame, f"Raw Score: {int(predict)}", (x, y+h+25), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 0, 255), 2)
 
                 except Exception as db_err:
-                    # ✨ ERROR: Database is missing or table not found
-                    cv2.putText(frame, "DB Error! Check Github", (x, y-30), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(frame, f"DB Error: {str(db_err)[:15]}", (x, y-30), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
 
         except Exception as err:
-            pass
+            cv2.putText(frame, f"Main Error: {str(err)[:20]}", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
         return av.VideoFrame.from_ndarray(frame, format="bgr24")
 
