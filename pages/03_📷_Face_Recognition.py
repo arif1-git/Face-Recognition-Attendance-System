@@ -7,11 +7,11 @@ from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 import time
-
+from streamlit_webrtc import webrtc_streamer, RTCConfiguration
+import av
 
 # PAGE CONFIG (Live Attendance with Face Recognition)
 st.set_page_config(page_title="Live Attendance", page_icon="👁️", layout="wide")
-
 
 # THEME CSS (Premium UI/UX & Dark Sidebar)
 def add_custom_css():
@@ -125,12 +125,6 @@ st.write("---")
 
 col1, col2, col3 = st.columns([1, 2, 1])
 
-with col2:
-    run = st.toggle('📸 Start Camera / Live Feed', value=False)
-    
-    status_container = st.empty()
-    FRAME_WINDOW = st.image([])
-
 # --- Safe Haar Cascade Loading ---
 cascade_path = 'haarcascade_frontalface_default.xml'
 if not os.path.exists(cascade_path):
@@ -146,6 +140,11 @@ except Exception as e:
     st.stop()
 
 
+# --- WebRTC Configuration for Cloud Camera ---
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
+
 if not os.path.exists("classifier.xml"):
     with col2:
         st.error("⚠️ Error: 'classifier.xml' file nahi mili! Pehle model train karein.")
@@ -153,77 +152,70 @@ else:
     recognizer = cv2.face.LBPHFaceRecognizer_create()
     recognizer.read("classifier.xml")
 
-    camera = None 
+    # Cloud Camera Processing Function
+    def video_frame_callback(frame_obj):
+        frame = frame_obj.to_ndarray(format="bgr24")
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
 
-    if run:
-        camera = cv2.VideoCapture(0)
-        status_container.info("Scanning for faces... Please look at the camera.")
-        
-        while run:
-            ret, frame = camera.read()
-            if not ret:
-                status_container.error("Camera access nahi ho pa raha hai. Kripya apna webcam check karein.")
-                break
-                
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
-
-            for (x, y, w, h) in faces:
-                id, predict = recognizer.predict(gray[y:y+h, x:x+w])
-                print(f"Detected ID: {id}, Predict Score: {predict}")
-                
-                # Confidence threshold set to 75 for better accuracy
-                if predict < 75:
-                    try:
-                        conn = sqlite3.connect("attendance_system.db")
-                        my_cursor = conn.cursor()
-                        my_cursor.execute(f"SELECT name, student_id, dep, email FROM student WHERE student_id='{id}'")
-                        result = my_cursor.fetchone()
-                        conn.close()
-                        
-                        if result:
-                            n, r, d, e = result[0], result[1], result[2], result[3]
-                            
-                            is_new, curr_date, curr_time = mark_attendance(r, n, d)
-                            
-                            if is_new:
-                                st.toast(f"✅ Attendance marked for {n}!", icon="🎉")
-                                
-                                if e: 
-                                    send_student_email(e, n, curr_date, curr_time)
-                                    print(f"Email successfully sent to {n} at {e}")
-                            
-                            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 3)
-                            
-                            cv2.rectangle(frame, (x, y-75), (x+w, y), (0, 255, 0), cv2.FILLED) 
-                            cv2.putText(frame, f"{n}", (x+5, y-50), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 1)
-                            cv2.putText(frame, f"ID: {r}", (x+5, y-25), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
-                            cv2.putText(frame, "Present", (x+5, y-5), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
-                            
-                            # Confidence Formula updated so it doesn't go below 0
-                            confidence = int(max(0, 100 - predict))
-                            cv2.putText(frame, f"Match: {confidence}%", (x, y+h+25), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 255), 1)
-                            
-                            # ✨ NEW DEBUGGING TRICK ADDED HERE: Raw Score for Known Face
-                            cv2.putText(frame, f"Raw Score: {int(predict)}", (x, y+h+50), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 0), 2)
-
-                    except Exception as err:
-                        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
-                        cv2.putText(frame, "Database Error", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
-                        print(f"DB Error: {err}")
-                        
-                else:
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 3)
-                    cv2.putText(frame, "Unknown Face", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
+        for (x, y, w, h) in faces:
+            id, predict = recognizer.predict(gray[y:y+h, x:x+w])
+            print(f"Detected ID: {id}, Predict Score: {predict}")
+            
+            # Confidence threshold set to 75 for better accuracy
+            if predict < 75:
+                try:
+                    # check_same_thread=False added for Cloud Threading Safety
+                    conn = sqlite3.connect("attendance_system.db", check_same_thread=False)
+                    my_cursor = conn.cursor()
+                    my_cursor.execute(f"SELECT name, student_id, dep, email FROM student WHERE student_id='{id}'")
+                    result = my_cursor.fetchone()
+                    conn.close()
                     
-                    # ✨ NEW DEBUGGING TRICK ADDED HERE: Raw Score for Unknown Face
-                    cv2.putText(frame, f"Raw Score: {int(predict)}", (x, y+h+25), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 0, 255), 2)
+                    if result:
+                        n, r, d, e = result[0], result[1], result[2], result[3]
+                        
+                        is_new, curr_date, curr_time = mark_attendance(r, n, d)
+                        
+                        if is_new:
+                            print(f"✅ Attendance marked in system for {n}!")
+                            if e: 
+                                send_student_email(e, n, curr_date, curr_time)
+                                print(f"Email successfully sent to {n} at {e}")
+                        
+                        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 3)
+                        
+                        cv2.rectangle(frame, (x, y-75), (x+w, y), (0, 255, 0), cv2.FILLED) 
+                        cv2.putText(frame, f"{n}", (x+5, y-50), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 1)
+                        cv2.putText(frame, f"ID: {r}", (x+5, y-25), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
+                        cv2.putText(frame, "Present", (x+5, y-5), cv2.FONT_HERSHEY_DUPLEX, 0.6, (255, 255, 255), 1)
+                        
+                        # Confidence Formula updated so it doesn't go below 0
+                        confidence = int(max(0, 100 - predict))
+                        cv2.putText(frame, f"Match: {confidence}%", (x, y+h+25), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 255), 1)
+                        
+                        # ✨ NEW DEBUGGING TRICK ADDED HERE: Raw Score for Known Face
+                        cv2.putText(frame, f"Raw Score: {int(predict)}", (x, y+h+50), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 0), 2)
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            FRAME_WINDOW.image(frame)
+                except Exception as err:
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 2)
+                    cv2.putText(frame, "Database Error", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
+                    print(f"DB Error: {err}")
+                    
+            else:
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 0, 255), 3)
+                cv2.putText(frame, "Unknown Face", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 0, 255), 2)
+                
+                # ✨ NEW DEBUGGING TRICK ADDED HERE: Raw Score for Unknown Face
+                cv2.putText(frame, f"Raw Score: {int(predict)}", (x, y+h+25), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 0, 255), 2)
 
-    else:
-        with col2:
-            st.info("System is ready. Toggle the switch above to start facial recognition.")
-        if camera is not None:
-            camera.release()
+        return av.VideoFrame.from_ndarray(frame, format="bgr24")
+
+    with col2:
+        st.info("System is ready. Click 'START' below to turn on the Cloud Camera.")
+        webrtc_streamer(
+            key="face-recognition",
+            video_frame_callback=video_frame_callback,
+            rtc_configuration=RTC_CONFIGURATION,
+            media_stream_constraints={"video": True, "audio": False}
+        )
