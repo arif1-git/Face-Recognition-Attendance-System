@@ -3,3 +3,4 @@ opencv-contrib-python-headless
 pandas
 plotly
 Pillow
+streamlit-webrtc
