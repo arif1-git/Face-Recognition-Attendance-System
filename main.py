@@ -51,14 +51,20 @@ html, body, [class*="css"] { font-family:'Inter', sans-serif; }
     background-color: #0a1128 !important;
     border-right: 2px solid #1CB5E0;
 }
-/* Sidebar Links (Active aur Inactive dono ke liye fade effect hataya) */
-[data-testid="stSidebarNav"] a, 
-[data-testid="stSidebarNav"] span {
+
+/* 🛠️ BULLETPROOF FIX FOR FADING SIDEBAR LINKS 🛠️ */
+[data-testid="stSidebarNav"] ul li a,
+[data-testid="stSidebarNav"] ul li a span,
+[data-testid="stSidebarNav"] ul li a div,
+[data-testid="stSidebarNav"] ul li a p,
+[data-testid="stSidebarNav"] ul li a svg {
     color: #ffffff !important;
     opacity: 1 !important; 
-    font-weight: 500;
-    font-size: 16px;
+    font-weight: 500 !important;
+    font-size: 16px !important;
+    fill: #ffffff !important;
 }
+
 [data-testid="stSidebarNav"] a:hover {
     background-color: rgba(28, 181, 224, 0.2) !important;
     border-radius: 8px;
