@@ -61,6 +61,26 @@ html, body, [class*="css"] { font-family:'Inter', sans-serif; }
     border-radius: 8px;
 }
 
+/* FIX FOR DARK MODE TEXT DISAPPEARANCE */
+/* Force Streamlit markdown text to be dark */
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] span {
+    color: #262730 !important; 
+}
+/* Force Metric (KPI) values and labels to be dark */
+[data-testid="stMetricValue"] div {
+    color: #000851 !important;
+}
+[data-testid="stMetricLabel"] label {
+    color: #5a6a85 !important;
+}
+/* Force Dataframe Text to be readable */
+[data-testid="stDataFrame"] {
+    background-color: #ffffff !important;
+}
+[data-testid="stDataFrame"] td, [data-testid="stDataFrame"] th {
+    color: #262730 !important;
+}
+
 /* Header UI Elements */
 .crest-container { text-align: center; margin-bottom: 25px; }
 
