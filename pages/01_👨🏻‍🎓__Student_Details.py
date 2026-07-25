@@ -2,10 +2,11 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import cv2
+import numpy as np
 import os
 import glob
 import time
-
+import random
 
 # PAGE CONFIG
 st.set_page_config(page_title="Student Management", page_icon="🎓", layout="wide")
@@ -69,6 +70,12 @@ add_custom_css()
 if "logged_in" not in st.session_state or not st.session_state.logged_in:
     st.warning("⚠️ Unauthorized Access! Please login from the main page.")
     st.stop()
+
+# --- CAMERA SESSION STATES ---
+if "camera_active" not in st.session_state:
+    st.session_state.camera_active = False
+if "current_student_id" not in st.session_state:
+    st.session_state.current_student_id = ""
 
 # --- DATABASE SETUP (SQLite) ---
 def init_student_db():
@@ -134,70 +141,49 @@ def delete_student_data(student_id):
         return True
     return False
 
-# --- OPENCV FACE CAPTURE ---
-def capture_face_samples(student_id):
+# --- OPENCV CLOUD-SAFE FACE CAPTURE (DATA AUGMENTATION) ---
+def generate_samples_from_image(cv2_img, student_id):
     if not os.path.exists('Data'):
         os.makedirs('Data')
         
-    # Safe Cascade Loading applied here
     cascade_path = 'haarcascade_frontalface_default.xml'
     if not os.path.exists(cascade_path):
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         
     face_classifier = cv2.CascadeClassifier(cascade_path)
     
-    # Check if classifier loaded properly
     if face_classifier.empty():
-        st.error("⚠️ Error: Haar Cascade XML file could not be loaded. Face detection cannot start.")
-        return
-    
-    def face_cropped(img):
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_classifier.detectMultiScale(gray, 1.3, 5)
-        for (x, y, w, h) in faces:
-            return img[y:y+h, x:x+w], (x, y, w, h)
-        return None, None
-
-    cap = cv2.VideoCapture(0)
-    img_id = 0
-    
-    st.info("📷 Please look toward the camera. 100 samples are being captured...")
-    
-    FRAME_WINDOW = st.image([])
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    while True:
-        ret, my_frame = cap.read()
-        if not ret:
-            st.error("Camera access failed! Please check your webcam.")
-            break
-            
-        cropped_face, coords = face_cropped(my_frame)
+        st.error("⚠️ Error: Haar Cascade XML file not found.")
+        return False
         
-        if cropped_face is not None:
-            img_id += 1
-            face_resized = cv2.resize(cropped_face, (450, 450))
-            face_gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2GRAY)
+    faces = face_classifier.detectMultiScale(gray, 1.3, 5)
+    
+    if len(faces) == 0:
+        st.error("❌ No face detected! Please ensure clear lighting and look directly into the camera.")
+        return False
+        
+    for (x, y, w, h) in faces:
+        cropped_face = cv2_img[y:y+h, x:x+w]
+        face_resized = cv2.resize(cropped_face, (450, 450))
+        face_gray = cv2.cvtColor(face_resized, cv2.COLOR_BGR2GRAY)
+        
+        # Generating 100 dynamic samples from a single captured image
+        st.info("🔄 Processing image and generating 100 training samples...")
+        progress_bar = st.progress(0)
+        
+        for i in range(1, 101):
+            # Using alpha/beta scaling to safely change brightness (Augmentation)
+            brightness_shift = random.randint(-40, 40)
+            aug_face = cv2.convertScaleAbs(face_gray, alpha=1.0, beta=brightness_shift)
             
-            file_name_path = f"Data/user.{student_id}.{img_id}.jpg"
-            cv2.imwrite(file_name_path, face_gray)
+            file_name_path = f"Data/user.{student_id}.{i}.jpg"
+            cv2.imwrite(file_name_path, aug_face)
+            progress_bar.progress(i)
+            time.sleep(0.01)
             
-            x, y, w, h = coords
-            cv2.rectangle(my_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(my_frame, f"Samples: {img_id}/100", (x, y-10), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 0), 2)
-            
-            progress_bar.progress(img_id)
-            status_text.text(f"Capturing... {img_id}% done")
-            
-        my_frame_rgb = cv2.cvtColor(my_frame, cv2.COLOR_BGR2RGB)
-        FRAME_WINDOW.image(my_frame_rgb)
-
-        if img_id >= 100:
-            break
-            
-    cap.release()
-    st.success(f"✅ Successfully {img_id} The samples have been captured!")
+        return True
+    return False
 
 # --- STREAMLIT UI ---
 def student_module():
@@ -240,7 +226,31 @@ def student_module():
                 if student_id == "":
                     st.warning("⚠️ Please enter the Student ID first!")
                 else:
-                    capture_face_samples(student_id)
+                    # Activate Streamlit's native camera instead of OpenCV's
+                    st.session_state.current_student_id = student_id
+                    st.session_state.camera_active = True
+                    st.rerun()
+
+        # Web Camera Section UI
+        if st.session_state.camera_active:
+            st.markdown("<hr style='border: 1px solid #1CB5E0;'>", unsafe_allow_html=True)
+            st.markdown("### 📸 Capture Profile Photo")
+            st.caption("Click a clear photo. The system will automatically extract your face and generate dataset samples.")
+            
+            img_buffer = st.camera_input("Take a photo")
+            
+            if img_buffer is not None:
+                bytes_data = img_buffer.getvalue()
+                cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+                
+                if generate_samples_from_image(cv2_img, st.session_state.current_student_id):
+                    st.success(f"✅ Training data generated for ID: {st.session_state.current_student_id}!")
+                    st.session_state.camera_active = False
+                    st.rerun()
+                
+            if st.button("Cancel Camera"):
+                st.session_state.camera_active = False
+                st.rerun()
 
     with tab2:
         st.subheader("Student Database")
@@ -291,6 +301,7 @@ def student_module():
                 if submit_update:
                     if update_student(selected_id, new_name, new_dep, new_course, new_year, new_sem, new_email):
                         st.success(f"✅ The data for Student ID {selected_id} has been successfully updated!")
+                        time.sleep(1)
                         st.rerun()
                     else:
                         st.error("❌ An error occurred while updating the data. Please try again.")
@@ -308,6 +319,7 @@ def student_module():
             else:
                 if delete_student_data(del_student_id):
                     st.success(f"✅ The data and photos for Student ID {del_student_id} have been successfully deleted!")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("❌ This Student ID was not found in the database. Please check and try again.")
